@@ -13,6 +13,8 @@ grails:
         ehcache:
             ehcacheXmlLocation: 'classpath:ozone/framework/ehcache.xml'
             lockTimeout: 200  # milliseconds
+    cors:
+        enabled: true
 
 info:
     app:
@@ -96,8 +98,12 @@ environments:
             port: 8443
             ssl:
                 enabled: true
-                key-store: './certs/keystore.jks'
-                key-store-password: 'changeit'
+                protocol: "TLS"
+                client-auth: "want"
+                key-store: "./certs/keystore.jks"
+                key-store-password: "changeit"
+                trust-store: "./certs/keystore.jks"
+                trust-store-password: "changeit"
 
 ---
 security:

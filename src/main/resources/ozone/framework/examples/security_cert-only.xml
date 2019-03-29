@@ -2,35 +2,72 @@
 
 <beans xmlns="http://www.springframework.org/schema/beans"
        xmlns:sec="http://www.springframework.org/schema/security"
+       xmlns:util="http://www.springframework.org/schema/util"
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
        xsi:schemaLocation="http://www.springframework.org/schema/beans
                            http://www.springframework.org/schema/beans/spring-beans-4.3.xsd
                            http://www.springframework.org/schema/security
-                           http://www.springframework.org/schema/security/spring-security-4.2.xsd">
+                           http://www.springframework.org/schema/security/spring-security-4.2.xsd
+                           http://www.springframework.org/schema/util
+                           http://www.springframework.org/schema/util/spring-util-4.3.xsd">
 
+    <!-- Enable annotation-driven security -->
+    <sec:global-method-security jsr250-annotations="enabled"
+                                pre-post-annotations="enabled"
+                                proxy-target-class="true"/>
 
-    <bean id="propConfig" class="org.springframework.context.support.PropertySourcesPlaceholderConfigurer">
-        <property name="location" value="classpath:ozone/framework/application.properties"/>
+    <!-- The example DetailService implementation which reads from the preset user.properties file -->
+    <bean id="userService" class="ozone.securitysample.authentication.basic.MyDetailsService">
+        <property name="propertyFileName" value="/ozone/framework/users.properties"/>
     </bean>
 
-
-    <import resource="security/method-security.xml"/>
-
-    <import resource="security/user-service.xml" />
-    <import resource="security/authentication-providers.xml" />
-
-
-    <bean id="x509Filter" class="org.springframework.security.web.authentication.preauth.x509.X509AuthenticationFilter">
-        <property name="authenticationManager" ref="authenticationManager"/>
+    <!-- Grails authentication cache -->
+    <bean id="grailsUserCache"
+          factory-bean="grailsCacheManager"
+          factory-method="getCache">
+        <constructor-arg index="0" type="java.lang.String" value="userCache"/>
     </bean>
 
+    <!-- Spring authentication cache -->
+    <bean id="springUserCache" class="org.springframework.security.core.userdetails.cache.SpringCacheBasedUserCache">
+        <constructor-arg index="0" type="org.springframework.cache.Cache" ref="grailsUserCache"/>
+    </bean>
+
+    <!-- Authentication provider for X509 certificate authentication -->
+    <bean id="preAuthenticatedAuthProvider"
+          class="ozone.security.authentication.CachingPreAuthenticatedAuthenticationProvider">
+        <property name="preAuthenticatedUserDetailsService">
+            <bean class="org.springframework.security.core.userdetails.UserDetailsByNameServiceWrapper">
+                <constructor-arg ref="userService"/>
+            </bean>
+        </property>
+        <property name="userCache" ref="springUserCache"/>
+        <property name="order">
+            <util:constant static-field="org.springframework.core.Ordered.HIGHEST_PRECEDENCE"/>
+        </property>
+    </bean>
+
+    <!-- Authentication manager must be defined using 'id' and not 'ref' -->
+    <sec:authentication-manager id="preAuthenticatedAuthManager">
+        <sec:authentication-provider ref="preAuthenticatedAuthProvider"/>
+    </sec:authentication-manager>
+
+    <!-- Entry point to return a '403 Forbidden' error if certificate authentication fails -->
+    <bean id="authenticationEntryPoint"
+          class="org.springframework.security.web.authentication.Http403ForbiddenEntryPoint"/>
+
+    <!-- Custom Ozone cookie filter -->
     <bean id="ozoneCookieFilter" class="ozone.security.filters.OzoneCookieFilter"/>
 
+    <!-- X509 certificate filter -->
+    <bean id="x509Filter" class="org.springframework.security.web.authentication.preauth.x509.X509AuthenticationFilter">
+        <property name="authenticationManager" ref="preAuthenticatedAuthManager"/>
+    </bean>
 
-    <sec:http realm="OZONE">
+    <sec:http realm="OZONE" entry-point-ref="authenticationEntryPoint">
 
         <sec:port-mappings>
-            <sec:port-mapping http="${ozone.unsecurePort}" https="${ozone.port}"/>
+            <sec:port-mapping http="8080" https="8443"/>
         </sec:port-mappings>
 
         <!-- CSRF protection must be disabled (enabled by default) to allow POST (& PATCH, PUT, DELETE) requests,
@@ -41,6 +78,9 @@
         <sec:headers>
             <sec:frame-options policy="SAMEORIGIN"/>
         </sec:headers>
+
+        <sec:custom-filter ref="ozoneCookieFilter" before="ANONYMOUS_FILTER"/>
+        <sec:custom-filter ref="x509Filter" position="X509_FILTER"/>
 
         <sec:intercept-url pattern="/static/**"
                            access="permitAll()" />
@@ -54,20 +94,11 @@
                     delete-cookies="JSESSIONID"
                     invalidate-session="true" />
 
-        <!-- Cannot use <sec:x509> element since it adds an extra authenticationprovider that bypasses the caching provider -->
-        <sec:custom-filter ref="x509Filter" position="X509_FILTER"/>
-
-        <sec:custom-filter ref="ozoneCookieFilter" before="ANONYMOUS_FILTER"/>
-
     </sec:http>
 
-
-    <sec:authentication-manager alias="authenticationManager">
-
-        <!-- Certificate Authentication -->
-        <sec:authentication-provider ref="cachingPreauthProvider"/>
-
-    </sec:authentication-manager>
-
+    <!-- A primary instance must be specified due to a duplicate bean registration -->
+    <bean id="authenticationEventPublisher"
+          primary="true"
+          class="org.springframework.security.authentication.DefaultAuthenticationEventPublisher"/>
 
 </beans>
